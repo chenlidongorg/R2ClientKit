@@ -4,8 +4,8 @@ import NIOFoundationCompat
 import SotoCore
 import SotoS3
 
-/// Errors that can be thrown by `SRR2Client`.
-public enum SRR2ClientError: LocalizedError {
+/// Errors that can be thrown by `R2Client`.
+public enum R2ClientError: LocalizedError {
     case missingResponseBody
     case emptyResponseBody
 
@@ -20,8 +20,8 @@ public enum SRR2ClientError: LocalizedError {
 }
 
 @available(iOS 13.0, macOS 11.0, tvOS 13.0, *)
-public final class SRR2Client {
-    /// Configuration options for `SRR2Client`.
+public final class R2Client {
+    /// Configuration options for `R2Client`.
     public struct Configuration {
         public var bucketName: String
         public var endpoint: URL
@@ -136,13 +136,13 @@ public final class SRR2Client {
 
     public let configuration: Configuration
 
-    /// Creates a new `SRR2Client` using the provided configuration. A new `AWSClient` will be created and managed
+    /// Creates a new `R2Client` using the provided configuration. A new `AWSClient` will be created and managed
     /// by the instance.
     public convenience init(configuration: Configuration) {
         self.init(configuration: configuration, client: nil)
     }
 
-    /// Creates a new `SRR2Client` with an externally managed `AWSClient`.
+    /// Creates a new `R2Client` with an externally managed `AWSClient`.
     /// - Parameters:
     ///   - configuration: Runtime configuration.
     ///   - client: An existing `AWSClient`. When provided, the caller is responsible for shutting it down.
@@ -234,9 +234,9 @@ public final class SRR2Client {
             }
             let reportedLength = response.contentLength ?? body.length.map { Int64($0) }
             if reportedLength == 0 {
-                throw SRR2ClientError.emptyResponseBody
+                throw R2ClientError.emptyResponseBody
             }
-            throw SRR2ClientError.missingResponseBody
+            throw R2ClientError.missingResponseBody
         }
 
         return downloaded
