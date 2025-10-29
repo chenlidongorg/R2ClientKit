@@ -8,6 +8,7 @@ import SotoS3
 public enum R2ClientError: LocalizedError {
     case missingResponseBody
     case emptyResponseBody
+    case uploadFileExceedsMaximumSize(maximumMB: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -15,6 +16,8 @@ public enum R2ClientError: LocalizedError {
             return "The S3 response did not contain a body."
         case .emptyResponseBody:
             return "The S3 response body was empty."
+        case .uploadFileExceedsMaximumSize(let maximumMB):
+            return "The file exceeds the maximum allowed size of \(maximumMB) MB."
         }
     }
 }
@@ -258,6 +261,7 @@ public final class R2Client {
     ///   - expectedBucketOwner: Expected bucket owner ID.
     ///   - requestPayer: Request payer configuration.
     ///   - retryConfiguration: Retry behaviour for transient failures.
+    ///   - maxUploadSizeInMB: Optional maximum upload size in megabytes. Pass `30` to restrict uploads to 30 MB. Defaults to no limit.
     public func uploadFile(
         data: Data,
         key: String,
@@ -271,9 +275,17 @@ public final class R2Client {
         ssekmsKeyId: String? = nil,
         expectedBucketOwner: String? = nil,
         requestPayer: S3.RequestPayer? = nil,
-        retryConfiguration: RetryConfiguration = .init()
+        retryConfiguration: RetryConfiguration = .init(),
+        maxUploadSizeInMB: Int? = nil
     ) async throws {
         let attempts = max(1, retryConfiguration.maxRetries + 1)
+
+        if let maxUploadSizeInMB, maxUploadSizeInMB > 0 {
+            let maxAllowedBytes = Int64(maxUploadSizeInMB) * 1_048_576
+            if Int64(data.count) > maxAllowedBytes {
+                throw R2ClientError.uploadFileExceedsMaximumSize(maximumMB: maxUploadSizeInMB)
+            }
+        }
 
         for attempt in 0..<attempts {
             do {
