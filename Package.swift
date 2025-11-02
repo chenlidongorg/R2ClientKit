@@ -7,6 +7,7 @@ let package = Package(
     name: "R2ClientKit",
     platforms: [
         .iOS(.v13),
+        .macCatalyst(.v13),
         .macOS(.v11),
         .tvOS(.v13)
     ],
