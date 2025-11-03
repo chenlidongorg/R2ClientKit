@@ -17,7 +17,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/soto-project/soto.git", from: "7.3.0")
+        .package(url: "https://github.com/soto-project/soto.git", exact: "7.3.0")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
