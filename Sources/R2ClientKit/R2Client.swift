@@ -1,58 +1,73 @@
 import Foundation
 import SotoS3
+import AsyncHTTPClient  // 添加这行
 
 
-/// Errors that can be thrown by `R2Client`.
+/// Errors emitted by ``R2Client``.
 public enum R2ClientError: LocalizedError {
-    case missingResponseBody
+    case invalidEndpoint(String)
+    case fileTooLarge(maxSizeMB: Int)
     case emptyResponseBody
-    case uploadFileExceedsMaximumSize(maximumMB: Int)
 
     public var errorDescription: String? {
         switch self {
-        case .missingResponseBody:
-            return "The S3 response did not contain a body."
+        case .invalidEndpoint(let rawValue):
+            return "Invalid R2 endpoint: \(rawValue)"
+        case .fileTooLarge(let maximum):
+            return "The payload exceeds \(maximum) MB."
         case .emptyResponseBody:
-            return "The S3 response body was empty."
-        case .uploadFileExceedsMaximumSize(let maximumMB):
-            return "The file exceeds the maximum allowed size of \(maximumMB) MB."
+            return "The object body was empty."
         }
     }
 }
 
+/// Small convenience wrapper around Soto's S3 client for Cloudflare R2.
 public final class R2Client {
-    /// Configuration options for `R2Client`.
-    public struct Configuration {
-        public var bucketName: String
-        public var endpoint: URL
-        public var region: SotoCore.Region?
-        public var partition: AWSPartition
-        public var credentialProvider: CredentialProviderFactory
-        public var retryPolicy: RetryPolicyFactory
-        public var clientOptions: AWSClient.Options
-        public var serviceOptions: AWSServiceConfig.Options
-        public var httpClient: (any AWSHTTPClient)?
-        public var timeout: TimeAmount?
-        public var byteBufferAllocator: ByteBufferAllocator
-        public var logger: Logger
+    private let client: AWSClient
+    private let s3: S3
+    private let ownsClient: Bool
 
-        /// Convenience initializer that accepts explicit credentials.
-        public init(
-            bucketName: String,
-            endpoint: URL,
-            accessKeyId: String,
-            secretAccessKey: String,
-            sessionToken: String? = nil,
-            region: SotoCore.Region? = nil,
-            partition: AWSPartition = .aws,
-            timeout: TimeAmount? = nil,
-            byteBufferAllocator: ByteBufferAllocator = .init(),
-            logger: Logger = AWSClient.loggingDisabled,
-            retryPolicy: RetryPolicyFactory = .default,
-            clientOptions: AWSClient.Options = .init(),
-            serviceOptions: AWSServiceConfig.Options = [],
-            httpClient: (any AWSHTTPClient)? = nil
-        ) {
+    public let bucketName: String
+
+    /// Creates a client using the canonical Cloudflare endpoint format (`https://<account>.r2.cloudflarestorage.com`).
+    public convenience init(
+        bucketName: String,
+        accountId: String,
+        accessKeyId: String,
+        secretAccessKey: String,
+        sessionToken: String? = nil,
+        client: AWSClient? = nil
+    ) throws {
+        let endpointString = "https://\(accountId).r2.cloudflarestorage.com"
+        guard let endpoint = URL(string: endpointString) else {
+            throw R2ClientError.invalidEndpoint(endpointString)
+        }
+
+        self.init(
+            bucketName: bucketName,
+            endpoint: endpoint,
+            accessKeyId: accessKeyId,
+            secretAccessKey: secretAccessKey,
+            sessionToken: sessionToken,
+            client: client
+        )
+    }
+
+    /// Designated initializer with an explicit endpoint URL.
+    public init(
+        bucketName: String,
+        endpoint: URL,
+        accessKeyId: String,
+        secretAccessKey: String,
+        sessionToken: String? = nil,
+        client: AWSClient? = nil
+    ) {
+        self.bucketName = bucketName
+
+        if let client {
+            self.client = client
+            self.ownsClient = false
+        } else {
             let credentialProvider: CredentialProviderFactory
             if let sessionToken {
                 credentialProvider = .static(
@@ -67,288 +82,112 @@ public final class R2Client {
                 )
             }
 
-            self.init(
-                bucketName: bucketName,
-                endpoint: endpoint,
-                credentialProvider: credentialProvider,
-                region: region,
-                partition: partition,
-                timeout: timeout,
-                byteBufferAllocator: byteBufferAllocator,
-                logger: logger,
-                retryPolicy: retryPolicy,
-                clientOptions: clientOptions,
-                serviceOptions: serviceOptions,
-                httpClient: httpClient
-            )
-        }
-
-        /// Designated initializer giving full control over the credential provider and runtime options.
-        public init(
-            bucketName: String,
-            endpoint: URL,
-            credentialProvider: CredentialProviderFactory,
-            region: SotoCore.Region? = nil,
-            partition: AWSPartition = .aws,
-            timeout: TimeAmount? = nil,
-            byteBufferAllocator: ByteBufferAllocator = .init(),
-            logger: Logger = AWSClient.loggingDisabled,
-            retryPolicy: RetryPolicyFactory = .default,
-            clientOptions: AWSClient.Options = .init(),
-            serviceOptions: AWSServiceConfig.Options = [],
-            httpClient: (any AWSHTTPClient)? = nil
-        ) {
-            self.bucketName = bucketName
-            self.endpoint = endpoint
-            self.region = region
-            self.partition = partition
-            self.credentialProvider = credentialProvider
-            self.retryPolicy = retryPolicy
-            self.clientOptions = clientOptions
-            self.serviceOptions = serviceOptions
-            self.httpClient = httpClient
-            self.timeout = timeout
-            self.byteBufferAllocator = byteBufferAllocator
-            self.logger = logger
-        }
-    }
-
-    /// Simple retry configuration for idempotent operations.
-    public struct RetryConfiguration {
-        public var maxRetries: Int
-
-        public init(maxRetries: Int = 2) {
-            self.maxRetries = max(0, maxRetries)
-        }
-
-        /// Retry disabled.
-        public static var none: RetryConfiguration { RetryConfiguration(maxRetries: 0) }
-    }
-
-    private enum ClientOwnership {
-        case owned
-        case shared
-    }
-
-    private let client: AWSClient
-    private let s3: S3
-    private let ownership: ClientOwnership
-
-    public let configuration: Configuration
-
-    /// Creates a new `R2Client` using the provided configuration. A new `AWSClient` will be created and managed
-    /// by the instance.
-    public convenience init(configuration: Configuration) {
-        self.init(configuration: configuration, client: nil)
-    }
-
-    /// Creates a new `R2Client` with an externally managed `AWSClient`.
-    /// - Parameters:
-    ///   - configuration: Runtime configuration.
-    ///   - client: An existing `AWSClient`. When provided, the caller is responsible for shutting it down.
-    public init(configuration: Configuration, client: AWSClient?) {
-        self.configuration = configuration
-
-        if let client {
-            self.client = client
-            self.ownership = .shared
-        } else if let httpClient = configuration.httpClient {
-            self.client = AWSClient(
-                credentialProvider: configuration.credentialProvider,
-                retryPolicy: configuration.retryPolicy,
-                options: configuration.clientOptions,
-                httpClient: httpClient,
-                logger: configuration.logger
-            )
-            self.ownership = .owned
-        } else {
-            self.client = AWSClient(
-                credentialProvider: configuration.credentialProvider,
-                retryPolicy: configuration.retryPolicy,
-                options: configuration.clientOptions,
-                logger: configuration.logger
-            )
-            self.ownership = .owned
+            self.client = AWSClient(credentialProvider: credentialProvider)
+            self.ownsClient = true
         }
 
         self.s3 = S3(
             client: self.client,
-            region: configuration.region,
-            partition: configuration.partition,
-            endpoint: configuration.endpoint.absoluteString,
-            timeout: configuration.timeout,
-            byteBufferAllocator: configuration.byteBufferAllocator,
-            options: configuration.serviceOptions
+            endpoint: endpoint.absoluteString
         )
     }
 
     deinit {
-        if ownership == .owned {
+        if ownsClient {
             try? client.syncShutdown()
         }
     }
 
-    /// Downloads an object and returns it as `Data`.
-    ///
-    /// - Parameters:
-    ///   - key: Object key.
-    ///   - versionId: Specific object version.
-    ///   - range: An optional byte range (inclusive).
-    ///   - expectedBucketOwner: Expected bucket owner ID.
-    ///   - requestPayer: Request payer configuration.
-    ///   - allowEmptyData: Whether an empty object should be considered a success.
-    /// - Returns: Raw bytes of the object.
-    public func downloadFile(
-        key: String,
-        versionId: String? = nil,
-        range: ClosedRange<Int>? = nil,
-        expectedBucketOwner: String? = nil,
-        requestPayer: S3.RequestPayer? = nil,
-        allowEmptyData: Bool = false
-    ) async throws -> Data {
-        let byteRange = range.map { "bytes=\($0.lowerBound)-\($0.upperBound)" }
-        let request = S3.GetObjectRequest(
-            bucket: configuration.bucketName,
-            expectedBucketOwner: expectedBucketOwner,
+    /// Uploads an in-memory payload.
+    public func upload(
+        data: Data,
+        to key: String,
+        contentType: String? = nil,
+        metadata: [String: String]? = nil,
+        cacheControl: String? = nil,
+        maxSizeInMB: Int? = nil
+    ) async throws {
+        if let maxSizeInMB, maxSizeInMB > 0 {
+            let limitBytes = Int64(maxSizeInMB) * 1_048_576
+            guard Int64(data.count) <= limitBytes else {
+                throw R2ClientError.fileTooLarge(maxSizeMB: maxSizeInMB)
+            }
+        }
+
+        
+        let payload = ByteBuffer(data: data)
+        let request = S3.PutObjectRequest(
+            body: .init(buffer: payload),
+            bucket: bucketName,
+            cacheControl: cacheControl,
+            contentType: contentType,
             key: key,
-            range: byteRange,
-            requestPayer: requestPayer,
-            versionId: versionId
+            metadata: metadata
         )
 
-        let response = try await s3.getObject(request, logger: configuration.logger)
-        let body = response.body
-
-        var downloaded = Data()
-        for try await var chunk in body {
-            if let bytes = chunk.readBytes(length: chunk.readableBytes) {
-                downloaded.append(contentsOf: bytes)
-            } else {
-                downloaded.append(contentsOf: chunk.readableBytesView)
-            }
-        }
-
-        guard !downloaded.isEmpty else {
-            if allowEmptyData {
-                return Data()
-            }
-            let reportedLength = response.contentLength ?? body.length.map { Int64($0) }
-            if reportedLength == 0 {
-                throw R2ClientError.emptyResponseBody
-            }
-            throw R2ClientError.missingResponseBody
-        }
-
-        return downloaded
+        _ = try await s3.putObject(request)
     }
 
-    /// Uploads an object to the configured bucket.
-    ///
-    /// - Parameters:
-    ///   - data: Payload to upload.
-    ///   - key: Object key.
-    ///   - metadata: Custom metadata.
-    ///   - contentType: Optional MIME type.
-    ///   - cacheControl: Cache control header.
-    ///   - acl: Access control policy.
-    ///   - storageClass: Storage class.
-    ///   - tagging: Object tagging string.
-    ///   - serverSideEncryption: Encryption mode.
-    ///   - ssekmsKeyId: KMS key identifier.
-    ///   - expectedBucketOwner: Expected bucket owner ID.
-    ///   - requestPayer: Request payer configuration.
-    ///   - retryConfiguration: Retry behaviour for transient failures.
-    ///   - maxUploadSizeInMB: Optional maximum upload size in megabytes. Pass `30` to restrict uploads to 30 MB. Defaults to no limit.
+    /// Loads a file from disk and uploads it.
     public func uploadFile(
-        data: Data,
-        key: String,
-        metadata: [String: String]? = nil,
+        at fileURL: URL,
+        to key: String,
         contentType: String? = nil,
+        metadata: [String: String]? = nil,
         cacheControl: String? = nil,
-        acl: S3.ObjectCannedACL? = nil,
-        storageClass: S3.StorageClass? = nil,
-        tagging: String? = nil,
-        serverSideEncryption: S3.ServerSideEncryption? = nil,
-        ssekmsKeyId: String? = nil,
-        expectedBucketOwner: String? = nil,
-        requestPayer: S3.RequestPayer? = nil,
-        retryConfiguration: RetryConfiguration = .init(),
-        maxUploadSizeInMB: Int? = nil
+        maxSizeInMB: Int? = nil
     ) async throws {
-        let attempts = max(1, retryConfiguration.maxRetries + 1)
-
-        if let maxUploadSizeInMB, maxUploadSizeInMB > 0 {
-            let maxAllowedBytes = Int64(maxUploadSizeInMB) * 1_048_576
-            if Int64(data.count) > maxAllowedBytes {
-                throw R2ClientError.uploadFileExceedsMaximumSize(maximumMB: maxUploadSizeInMB)
-            }
-        }
-
-        for attempt in 0..<attempts {
-            do {
-                var buffer = configuration.byteBufferAllocator.buffer(capacity: data.count)
-                buffer.writeBytes(data)
-
-                let request = S3.PutObjectRequest(
-                    acl: acl,
-                    body: AWSHTTPBody(buffer: buffer),
-                    bucket: configuration.bucketName,
-                    cacheControl: cacheControl,
-                    contentType: contentType,
-                    expectedBucketOwner: expectedBucketOwner,
-                    key: key,
-                    metadata: metadata,
-                    requestPayer: requestPayer,
-                    serverSideEncryption: serverSideEncryption,
-                    ssekmsKeyId: ssekmsKeyId,
-                    storageClass: storageClass,
-                    tagging: tagging
-                )
-
-                _ = try await s3.putObject(request)
-
-                return
-            } catch {
-                if attempt == attempts - 1 {
-                    throw error
-                }
-            }
-        }
+        let data = try Data(contentsOf: fileURL)
+        try await upload(
+            data: data,
+            to: key,
+            contentType: contentType,
+            metadata: metadata,
+            cacheControl: cacheControl,
+            maxSizeInMB: maxSizeInMB
+        )
     }
 
-    /// Deletes a single object.
-    ///
-    /// - Parameters:
-    ///   - key: Object key.
-    ///   - versionId: Specific version to delete.
-    ///   - mfa: MFA token if bucket requires it.
-    ///   - bypassGovernanceRetention: Whether to bypass governance retention.
-    ///   - expectedBucketOwner: Expected bucket owner ID.
-    ///   - requestPayer: Request payer configuration.
-    public func deleteFile(
+    /// Downloads an object and returns it as `Data`.
+    public func download(
         key: String,
-        versionId: String? = nil,
-        mfa: String? = nil,
-        bypassGovernanceRetention: Bool? = nil,
-        expectedBucketOwner: String? = nil,
-        requestPayer: S3.RequestPayer? = nil
-    ) async throws {
+        allowEmpty: Bool = true
+    ) async throws -> Data {
+        
+        let getRequest = S3.GetObjectRequest(
+            bucket: bucketName,
+            key: key
+        )
+        let response = try await s3.getObject(getRequest)
+        
+        // 从 response.body 中读取数据
+        var data = Data()
+            for try await buffer in response.body {
+                data.append(contentsOf: buffer.readableBytesView)
+            }
+        
+        
+        guard !data.isEmpty else {
+            throw NSError(domain: "R2Manager", code: -1, userInfo: [NSLocalizedDescriptionKey: "下载数据为空"])
+        }
+        
+        return data
+        
+    }
+
+    /// Removes an object from the bucket.
+    public func delete(key: String) async throws {
         let request = S3.DeleteObjectRequest(
-            bucket: configuration.bucketName,
-            bypassGovernanceRetention: bypassGovernanceRetention,
-            expectedBucketOwner: expectedBucketOwner,
-            key: key,
-            mfa: mfa,
-            requestPayer: requestPayer,
-            versionId: versionId
+            bucket: bucketName,
+            key: key
         )
 
         _ = try await s3.deleteObject(request)
     }
 
-    /// Shutdown the underlying `AWSClient` if owned by this instance.
+    /// Shuts down the internally managed `AWSClient`. Safe to call multiple times.
     public func syncShutdown() throws {
-        if ownership == .owned {
+        if ownsClient {
             try client.syncShutdown()
         }
     }

@@ -6,9 +6,12 @@ import PackageDescription
 let package = Package(
     name: "R2ClientKit",
     platforms: [
-        .iOS(.v13),
-        .macOS(.v11),
-        .macCatalyst(.v13)
+        SupportedPlatform
+            .iOS(.v13)
+        //,
+        //SupportedPlatform
+           // .macOS(.v11)
+            
     ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
@@ -18,7 +21,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/soto-project/soto.git", from: "7.10.0")
+        .package(url: "https://github.com/soto-project/soto.git", from: "7.0.0")
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
