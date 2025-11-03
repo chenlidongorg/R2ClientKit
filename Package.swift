@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
     name: "R2ClientKit",
     platforms: [
-        SupportedPlatform
-            .iOS(.v13)
+        .iOS(.v13),
+        .macOS(.v11)
     ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
@@ -16,17 +16,12 @@ let package = Package(
             targets: ["R2ClientKit"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/soto-project/soto.git", exact: "7.3.0")
-    ],
+    dependencies: [],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "R2ClientKit",
-            dependencies: [
-                .product(name: "SotoS3", package: "soto")
-            ]
+            name: "R2ClientKit"
         ),
         .testTarget(
             name: "R2ClientKitTests",
