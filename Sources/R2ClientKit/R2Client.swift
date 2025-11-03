@@ -22,7 +22,6 @@ public enum R2ClientError: LocalizedError {
     }
 }
 
-@available(iOS 13.0, macOS 11.0, tvOS 13.0, *)
 public final class R2Client {
     /// Configuration options for `R2Client`.
     public struct Configuration {

@@ -13,7 +13,6 @@ let package = Package(
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "R2ClientKit",
-            type: .dynamic,
             targets: ["R2ClientKit"]
         ),
     ],
