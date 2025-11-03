@@ -17,7 +17,6 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/soto-project/soto-core.git", from: "7.9.0"),
         .package(url: "https://github.com/soto-project/soto.git", from: "7.10.0")
     ],
     targets: [
@@ -26,7 +25,6 @@ let package = Package(
         .target(
             name: "R2ClientKit",
             dependencies: [
-                .product(name: "SotoCore", package: "soto-core"),
                 .product(name: "SotoS3", package: "soto")
             ]
         ),

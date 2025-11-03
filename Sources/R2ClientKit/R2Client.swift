@@ -1,8 +1,6 @@
 import Foundation
-import NIOCore
-import NIOFoundationCompat
-import SotoCore
 import SotoS3
+
 
 /// Errors that can be thrown by `R2Client`.
 public enum R2ClientError: LocalizedError {
