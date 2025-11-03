@@ -1,6 +1,6 @@
 # R2ClientKit
 
-`R2ClientKit` 是一个基于 Swift Package Manager 的轻量级客户端封装，主要面向需要在 iOS 13、macOS 11、tvOS 13 及以上系统中访问 Cloudflare R2 存储桶的应用程序。它在 Soto AWS SDK 之上提供更贴近 R2 的默认配置和易用接口，将原本分散在 StoryReaderKit 项目中的逻辑抽取为独立依赖。
+`R2ClientKit` 是一个基于 Swift Package Manager 的轻量级客户端封装，主要面向需要在 iOS 13、macOS 11、mac Catalyst 13、tvOS 13 及以上系统中访问 Cloudflare R2 存储桶的应用程序。它在 Soto AWS SDK 之上提供更贴近 R2 的默认配置和易用接口，将原本分散在 StoryReaderKit 项目中的逻辑抽取为独立依赖。
 
 ## 主要特性
 
@@ -13,7 +13,7 @@
 ## 系统与依赖要求
 
 - Swift 5.9+
-- iOS 13 / macOS 11 / tvOS 13 及以上
+- iOS 13 / macOS 11 / mac Catalyst 13 / tvOS 13 及以上
 - 依赖 `soto-core` 与 `soto`（S3 模块），详见 `Package.swift`
 
 ## 安装
